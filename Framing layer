@@ -1,0 +1,704 @@
+[24bcs179@mepcolinux EX0]$cat EX0.prn
+Script started on Thursday 16 July 2026 10:36:34 AM IST
+[?1034h[24bcs179@mepcolinux EX0]$cat url.c 
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+#define TABLE_SIZE 10
+#define MAX_BITS   6000
+
+
+char urlTable[TABLE_SIZE][50];
+char ipTable[TABLE_SIZE][20];
+char macTable[TABLE_SIZE][20];
+int  used[TABLE_SIZE] = {0};
+
+int hashFunction(char url[]) {
+    int sum = 0;
+    int i;
+    for (i = 0; url[i] != '\0'; i++) {
+        sum = sum + url[i];
+    }
+    return sum % TABLE_SIZE;
+}
+
+void insertURL(char url[], char ip[], char mac[]) {
+    int index = hashFunction(url);
+    int count = 0;
+
+    while (used[index] == 1 && count < TABLE_SIZE) {
+        if (strcmp(urlTable[index], url) == 0) {
+            return;
+        }
+        index = (index + 1) % TABLE_SIZE;
+        count++;
+    }
+
+    strcpy(urlTable[index], url);
+    strcpy(ipTable[index], ip);
+    strcpy(macTable[index], mac);
+    used[index] = 1;
+}
+
+int searchURL(char url[]) {
+    int index = hashFunction(url);
+    int count = 0;
+
+    while (count < TABLE_SIZE) {
+        if (used[index] == 1 && strcmp(urlTable[index], url) == 0) {
+            return index;
+        }
+        index = (index + 1) % TABLE_SIZE;
+        count++;
+    }
+    return -1;
+}
+
+
+void printTable() {
+    int i;
+    printf("---------------------------------------------------\n");
+    printf(" HASH TABLE (URL -> IP -> MAC)\n");
+    printf("---------------------------------------------------\n");
+    for (i = 0; i < TABLE_SIZE; i++) {
+        if (used[i] == 1) {
+            printf(" Slot %d : %-15s | %-15s | %s\n",
+                   i, urlTable[i], ipTable[i], macTable[i]);
+        }
+    }
+    printf("---------------------------------------------------\n\n");
+}
+
+
+void byteToBinary(int number, char result[]) {
+    int i;
+    for (i = 7; i >= 0; i--) {
+        if ((number >> i) & 1) {
+            result[7 - i] = '1';
+        } else {
+            result[7 - i] = '0';
+        }
+    }
+    result[8] = '\0';
+}
+
+
+void numberToBinary16(int number, char result[]) {
+    int i;
+    for (i = 15; i >= 0; i--) {
+        if ((number >> i) & 1) {
+            result[15 - i] = '1';
+        } else {
+            result[15 - i] = '0';
+        }
+    }
+    result[16] = '\0';
+}
+
+
+void ipToBinary32(char ip[], char result[]) {
+    int a, b, c, d;
+    char piece[9];
+    sscanf(ip, "%d.%d.%d.%d", &a, &b, &c, &d);
+
+    result[0] = '\0';
+    byteToBinary(a, piece); strcat(result, piece);
+    byteToBinary(b, piece); strcat(result, piece);
+    byteToBinary(c, piece); strcat(result, piece);
+    byteToBinary(d, piece); strcat(result, piece);
+}
+
+
+void macToBinary48(char mac[], char result[]) {
+    int b0, b1, b2, b3, b4, b5;
+    char piece[9];
+    sscanf(mac, "%x:%x:%x:%x:%x:%x", &b0, &b1, &b2, &b3, &b4, &b5);
+
+    result[0] = '\0';
+    byteToBinary(b0, piece); strcat(result, piece);
+    byteToBinary(b1, piece); strcat(result, piece);
+    byteToBinary(b2, piece); strcat(result, piece);
+    byteToBinary(b3, piece); strcat(result, piece);
+    byteToBinary(b4, piece); strcat(result, piece);
+    byteToBinary(b5, piece); strcat(result, piece);
+}
+
+
+void makeRandomIP(char ip[]) {
+    int a = 1 + rand() % 223;
+    int b = rand() % 256;
+    int c = rand() % 256;
+    int d = 1 + rand() % 254;
+    sprintf(ip, "%d.%d.%d.%d", a, b, c, d);
+}
+
+void makeRandomMAC(char mac[]) {
+    sprintf(mac, "%02X:%02X:%02X:%02X:%02X:%02X",
+            rand() % 256, rand() % 256, rand() % 256,
+            rand() % 256, rand() % 256, rand() % 256);
+}
+
+int main() {
+    srand(time(NULL));
+
+    printf("=====================================================\n");
+    printf("     SIMPLE 4-LAYER NETWORK SIMULATOR (in binary)\n");
+    printf("=====================================================\n\n");
+
+
+    insertURL("google.com",    "142.250.193.14",  "3C:5A:B4:1D:9F:02");
+    insertURL("youtube.com",   "142.250.72.14",   "A4:5E:60:D3:2B:19");
+    insertURL("facebook.com",  "157.240.22.35",   "F0:2F:74:6B:88:11");
+    insertURL("amazon.com",    "205.251.242.103", "B8:27:EB:9A:3C:44");
+    insertURL("wikipedia.org", "208.80.154.224",  "00:1A:2B:3C:4D:5E");
+
+    printTable();
+
+
+    char srcUrl[50], dstUrl[50];
+    printf("Enter SOURCE URL (example: google.com): ");
+    scanf("%s", srcUrl);
+    printf("Enter DESTINATION URL (example: youtube.com): ");
+    scanf("%s", dstUrl);
+    getchar();
+
+
+    int srcIndex = searchURL(srcUrl);
+    if (srcIndex == -1) {
+        char newIp[20], newMac[20];
+        makeRandomIP(newIp);
+        makeRandomMAC(newMac);
+        insertURL(srcUrl, newIp, newMac);
+        srcIndex = searchURL(srcUrl);
+        printf("\n(\"%s\" was not in the table, so a new IP/MAC was created)\n", srcUrl);
+    }
+
+
+    int dstIndex = searchURL(dstUrl);
+    if (dstIndex == -1) {
+        char newIp[20], newMac[20];
+        makeRandomIP(newIp);
+        makeRandomMAC(newMac);
+        insertURL(dstUrl, newIp, newMac);
+        dstIndex = searchURL(dstUrl);
+        printf("\n(\"%s\" was not in the table, so a new IP/MAC was created)\n", dstUrl);
+    }
+
+
+    char srcIP[20], dstIP[20], srcMAC[20], dstMAC[20];
+    strcpy(srcIP,  ipTable[srcIndex]);
+    strcpy(dstIP,  ipTable[dstIndex]);
+    strcpy(srcMAC, macTable[srcIndex]);
+    strcpy(dstMAC, macTable[dstIndex]);
+
+
+    char srcIPBin[40], dstIPBin[40], srcMACBin[60], dstMACBin[60];
+    ipToBinary32(srcIP, srcIPBin);
+    ipToBinary32(dstIP, dstIPBin);
+    macToBinary48(srcMAC, srcMACBin);
+    macToBinary48(dstMAC, dstMACBin);
+
+    printf("\n----------------- ADDRESS RESOLUTION -----------------\n");
+    printf("SOURCE      : %s -> IP %s -> MAC %s\n", srcUrl, srcIP, srcMAC);
+    printf("   IP  binary  (32 bits): %s\n", srcIPBin);
+    printf("   MAC binary  (48 bits): %s\n", srcMACBin);
+    printf("DESTINATION : %s -> IP %s -> MAC %s\n", dstUrl, dstIP, dstMAC);
+    printf("   IP  binary  (32 bits): %s\n", dstIPBin);
+    printf("   MAC binary  (48 bits): %s\n", dstMACBin);
+    printf("-------------------------------------------------------\n\n");
+
+
+    char typedMessage[500];
+    printf("Enter the message you want to send: ");
+    fgets(typedMessage, sizeof(typedMessage), stdin);
+
+
+    int tlen = strlen(typedMessage);
+    if (tlen > 0 && typedMessage[tlen - 1] == '\n') {
+        typedMessage[tlen - 1] = '\0';
+    }
+
+
+    FILE *writeFile = fopen("message.txt", "w");
+    if (writeFile == NULL) {
+        printf("ERROR: could not create message.txt\n");
+        return 1;
+    }
+    fprintf(writeFile, "%s", typedMessage);
+    fclose(writeFile);
+    printf("(Message saved to message.txt)\n\n");
+
+
+    FILE *readFile = fopen("message.txt", "r");
+    if (readFile == NULL) {
+        printf("ERROR: could not open message.txt\n");
+        return 1;
+    }
+
+    char message[500];
+    int msgLength = 0;
+    int c;
+    while ((c = fgetc(readFile)) != EOF && msgLength < 499) {
+        if (c == '\n' || c == '\r') continue;
+        message[msgLength] = (char) c;
+        msgLength++;
+    }
+    message[msgLength] = '\0';
+    fclose(readFile);
+
+
+    printf("=============== APPLICATION LAYER ===============\n");
+    printf("Message read from message.txt: \"%s\"\n\n", message);
+
+    char bits[MAX_BITS];
+    bits[0] = '\0';
+    int i;
+    for (i = 0; i < msgLength; i++) {
+        char oneByte[9];
+        byteToBinary((int)(unsigned char)message[i], oneByte);
+        strcat(bits, oneByte);
+        printf("  '%c'  ->  %s\n", message[i], oneByte);
+    }
+    int totalBits = msgLength * 8;
+
+    printf("\nStream      : %s\n", bits);
+    printf("Total Bits  : %d bits\n", totalBits);
+    printf("===================================================\n\n");
+
+
+    int srcPort = 1024 + rand() % (65535 - 1024 + 1);
+    int dstPort = 1024 + rand() % (65535 - 1024 + 1);
+    char srcPortBin[17], dstPortBin[17];
+    numberToBinary16(srcPort, srcPortBin);
+    numberToBinary16(dstPort, dstPortBin);
+
+    char transportStream[MAX_BITS];
+    sprintf(transportStream, "%s%s%s", srcPortBin, dstPortBin, bits);
+    int transportTotalBits = 16 + 16 + totalBits;
+
+    printf("=============== TRANSPORT LAYER ===============\n");
+    printf("Source Port      : %d  (binary: %s)\n", srcPort, srcPortBin);
+    printf("Destination Port : %d  (binary: %s)\n", dstPort, dstPortBin);
+    printf("Stream           : %s\n", transportStream);
+    printf("Total Bits       : %d bits\n", transportTotalBits);
+    printf("=================================================\n\n");
+
+
+    char networkStream[MAX_BITS];
+    sprintf(networkStream, "%s%s%s", srcIPBin, dstIPBin, bits);
+    int networkTotalBits = 32 + 32 + totalBits;
+
+    printf("=============== NETWORK LAYER ===============\n");
+    printf("Source IP        : %s\n", srcIPBin);
+    printf("Destination IP   : %s\n", dstIPBin);
+    printf("Stream           : %s\n", networkStream);
+    printf("Total Bits       : %d bits\n\n", networkTotalBits);
+
+    int packetSize = 16;
+    int numPackets = totalBits / packetSize;
+    if (totalBits % packetSize != 0) {
+        numPackets++;
+    }
+
+    char packets[200][17];
+
+    printf("Total packets: %d\n\n", numPackets);
+
+    int p;
+    for (p = 0; p < numPackets; p++) {
+        int start = p * packetSize;
+        int b;
+        for (b = 0; b < packetSize; b++) {
+            int pos = start + b;
+            if (pos < totalBits) {
+                packets[p][b] = bits[pos];
+            } else {
+                packets[p][b] = '0';
+            }
+        }
+        packets[p][packetSize] = '\0';
+
+        printf("Packet %d:\n", p + 1);
+        printf("  Data      : %s\n", packets[p]);
+        printf("  Src IP    : %s\n", srcIPBin);
+        printf("  Dst IP    : %s\n\n", dstIPBin);
+    }
+    printf("===============================================\n\n");
+
+    char tail[9] = "00000000";
+
+    char dataLinkStream[MAX_BITS];
+    sprintf(dataLinkStream, "%s%s%s%s", srcMACBin, dstMACBin, networkStream, tail);
+    int dataLinkTotalBits = 48 + 48 + networkTotalBits + 8;
+
+    printf("=============== DATA LINK LAYER ===============\n");
+    printf("Source MAC       : %s\n", srcMACBin);
+    printf("Destination MAC  : %s\n", dstMACBin);
+    printf("Stream           : %s\n", dataLinkStream);
+    printf("Total Bits       : %d bits\n\n", dataLinkTotalBits);
+
+    int frameSize = 8;
+    int framesPerPacket = packetSize / frameSize;   /* = 2 */
+    int totalFrames = numPackets * framesPerPacket;
+
+    printf("Total frames: %d\n\n", totalFrames);
+
+    printf("====Each frame and its content======\n\n");
+
+    int frameNumber;
+    for (p = 0; p < numPackets; p++) {
+        for (frameNumber = 1; frameNumber <= framesPerPacket; frameNumber++) {
+
+            char frameData[9];
+            int start = (frameNumber - 1) * frameSize;
+            int k;
+            for (k = 0; k < frameSize; k++) {
+                frameData[k] = packets[p][start + k];
+            }
+            frameData[frameSize] = '\0';
+
+            printf("---------------------------------------------\n");
+            printf("Packet No : %d\n", p + 1);
+            printf("Frame No  : %d\n", frameNumber);
+            printf("Source Port      : %s\n", srcPortBin);
+            printf("Destination Port : %s\n\n", dstPortBin);
+            printf("Source IP        : %s\n", srcIPBin);
+            printf("Destination IP   : %s\n", dstIPBin);
+            printf("Source MAC       : %s\n", srcMACBin);
+            printf("Destination MAC  : %s\n", dstMACBin);
+            printf("Frame Data       : %s\n", frameData);
+            printf("Tail             : %s\n", tail);
+
+
+            printf("Frame Stream     : %s%s%s%s\n", tail, srcMACBin, dstMACBin, frameData);
+        }
+    }
+    printf("---------------------------------------------\n\n");
+
+
+    printf("=============== SUMMARY ===============\n");
+    printf("Message              : \"%s\"\n", message);
+    printf("Application bits     : %d\n", totalBits);
+    printf("Transport layer bits : %d\n", transportTotalBits);
+    printf("Network layer bits   : %d\n", networkTotalBits);
+    printf("Data Link layer bits : %d\n", dataLinkTotalBits);
+    printf("Total packets        : %d\n", numPackets);
+    printf("Total frames         : %d\n", totalFrames);
+    printf("=========================================\n");
+
+    return 0;
+}
+
+[24bcs179@mepcolinux EX0]$./a.out
+=====================================================
+     SIMPLE 4-LAYER NETWORK SIMULATOR (in binary)
+=====================================================
+
+---------------------------------------------------
+ HASH TABLE (URL -> IP -> MAC)
+---------------------------------------------------
+ Slot 1 : facebook.com    | 157.240.22.35   | F0:2F:74:6B:88:11
+ Slot 2 : google.com      | 142.250.193.14  | 3C:5A:B4:1D:9F:02
+ Slot 3 : amazon.com      | 205.251.242.103 | B8:27:EB:9A:3C:44
+ Slot 5 : wikipedia.org   | 208.80.154.224  | 00:1A:2B:3C:4D:5E
+ Slot 6 : youtube.com     | 142.250.72.14   | A4:5E:60:D3:2B:19
+---------------------------------------------------
+
+Enter SOURCE URL (example: google.com): google.com
+Enter DESTINATION URL (example: youtube.com): amazon.com
+
+----------------- ADDRESS RESOLUTION -----------------
+SOURCE      : google.com -> IP 142.250.193.14 -> MAC 3C:5A:B4:1D:9F:02
+   IP  binary  (32 bits): 10001110111110101100000100001110
+   MAC binary  (48 bits): 001111000101101010110100000111011001111100000010
+DESTINATION : amazon.com -> IP 205.251.242.103 -> MAC B8:27:EB:9A:3C:44
+   IP  binary  (32 bits): 11001101111110111111001001100111
+   MAC binary  (48 bits): 101110000010011111101011100110100011110001000100
+-------------------------------------------------------
+
+Enter the message you want to send: HI HOW ARE YOU
+(Message saved to message.txt)
+
+=============== APPLICATION LAYER ===============
+Message read from message.txt: "HI HOW ARE YOU"
+
+  'H'  ->  01001000
+  'I'  ->  01001001
+  ' '  ->  00100000
+  'H'  ->  01001000
+  'O'  ->  01001111
+  'W'  ->  01010111
+  ' '  ->  00100000
+  'A'  ->  01000001
+  'R'  ->  01010010
+  'E'  ->  01000101
+  ' '  ->  00100000
+  'Y'  ->  01011001
+  'O'  ->  01001111
+  'U'  ->  01010101
+
+Stream      : 0100100001001001001000000100100001001111010101110010000001000001010100100100010100100000010110010100111101010101
+Total Bits  : 112 bits
+===================================================
+
+=============== TRANSPORT LAYER ===============
+Source Port      : 31091  (binary: 0111100101110011)
+Destination Port : 50967  (binary: 1100011100010111)
+Stream           : 011110010111001111000111000101110100100001001001001000000100100001001111010101110010000001000001010100100100010100100000010110010100111101010101
+Total Bits       : 144 bits
+=================================================
+
+=============== NETWORK LAYER ===============
+Source IP        : 10001110111110101100000100001110
+Destination IP   : 11001101111110111111001001100111
+Stream           : 10001110111110101100000100001110110011011111101111110010011001110100100001001001001000000100100001001111010101110010000001000001010100100100010100100000010110010100111101010101
+Total Bits       : 176 bits
+
+Total packets: 7
+
+Packet 1:
+  Data      : 0100100001001001
+  Src IP    : 10001110111110101100000100001110
+  Dst IP    : 11001101111110111111001001100111
+
+Packet 2:
+  Data      : 0010000001001000
+  Src IP    : 10001110111110101100000100001110
+  Dst IP    : 11001101111110111111001001100111
+
+Packet 3:
+  Data      : 0100111101010111
+  Src IP    : 10001110111110101100000100001110
+  Dst IP    : 11001101111110111111001001100111
+
+Packet 4:
+  Data      : 0010000001000001
+  Src IP    : 10001110111110101100000100001110
+  Dst IP    : 11001101111110111111001001100111
+
+Packet 5:
+  Data      : 0101001001000101
+  Src IP    : 10001110111110101100000100001110
+  Dst IP    : 11001101111110111111001001100111
+
+Packet 6:
+  Data      : 0010000001011001
+  Src IP    : 10001110111110101100000100001110
+  Dst IP    : 11001101111110111111001001100111
+
+Packet 7:
+  Data      : 0100111101010101
+  Src IP    : 10001110111110101100000100001110
+  Dst IP    : 11001101111110111111001001100111
+
+===============================================
+
+=============== DATA LINK LAYER ===============
+Source MAC       : 001111000101101010110100000111011001111100000010
+Destination MAC  : 101110000010011111101011100110100011110001000100
+Stream           : 0011110001011010101101000001110110011111000000101011100000100111111010111001101000111100010001001000111011111010110000010000111011001101111110111111001001100111010010000100100100100000010010000100111101010111001000000100000101010010010001010010000001011001010011110101010100000000
+Total Bits       : 280 bits
+
+Total frames: 14
+
+====Each frame and its content======
+
+---------------------------------------------
+Packet No : 1
+Frame No  : 1
+Source Port      : 0111100101110011
+Destination Port : 1100011100010111
+
+Source IP        : 10001110111110101100000100001110
+Destination IP   : 11001101111110111111001001100111
+Source MAC       : 001111000101101010110100000111011001111100000010
+Destination MAC  : 101110000010011111101011100110100011110001000100
+Frame Data       : 01001000
+Tail             : 00000000
+Frame Stream     : 0000000000111100010110101011010000011101100111110000001010111000001001111110101110011010001111000100010001001000
+---------------------------------------------
+Packet No : 1
+Frame No  : 2
+Source Port      : 0111100101110011
+Destination Port : 1100011100010111
+
+Source IP        : 10001110111110101100000100001110
+Destination IP   : 11001101111110111111001001100111
+Source MAC       : 001111000101101010110100000111011001111100000010
+Destination MAC  : 101110000010011111101011100110100011110001000100
+Frame Data       : 01001001
+Tail             : 00000000
+Frame Stream     : 0000000000111100010110101011010000011101100111110000001010111000001001111110101110011010001111000100010001001001
+---------------------------------------------
+Packet No : 2
+Frame No  : 1
+Source Port      : 0111100101110011
+Destination Port : 1100011100010111
+
+Source IP        : 10001110111110101100000100001110
+Destination IP   : 11001101111110111111001001100111
+Source MAC       : 001111000101101010110100000111011001111100000010
+Destination MAC  : 101110000010011111101011100110100011110001000100
+Frame Data       : 00100000
+Tail             : 00000000
+Frame Stream     : 0000000000111100010110101011010000011101100111110000001010111000001001111110101110011010001111000100010000100000
+---------------------------------------------
+Packet No : 2
+Frame No  : 2
+Source Port      : 0111100101110011
+Destination Port : 1100011100010111
+
+Source IP        : 10001110111110101100000100001110
+Destination IP   : 11001101111110111111001001100111
+Source MAC       : 001111000101101010110100000111011001111100000010
+Destination MAC  : 101110000010011111101011100110100011110001000100
+Frame Data       : 01001000
+Tail             : 00000000
+Frame Stream     : 0000000000111100010110101011010000011101100111110000001010111000001001111110101110011010001111000100010001001000
+---------------------------------------------
+Packet No : 3
+Frame No  : 1
+Source Port      : 0111100101110011
+Destination Port : 1100011100010111
+
+Source IP        : 10001110111110101100000100001110
+Destination IP   : 11001101111110111111001001100111
+Source MAC       : 001111000101101010110100000111011001111100000010
+Destination MAC  : 101110000010011111101011100110100011110001000100
+Frame Data       : 01001111
+Tail             : 00000000
+Frame Stream     : 0000000000111100010110101011010000011101100111110000001010111000001001111110101110011010001111000100010001001111
+---------------------------------------------
+Packet No : 3
+Frame No  : 2
+Source Port      : 0111100101110011
+Destination Port : 1100011100010111
+
+Source IP        : 10001110111110101100000100001110
+Destination IP   : 11001101111110111111001001100111
+Source MAC       : 001111000101101010110100000111011001111100000010
+Destination MAC  : 101110000010011111101011100110100011110001000100
+Frame Data       : 01010111
+Tail             : 00000000
+Frame Stream     : 0000000000111100010110101011010000011101100111110000001010111000001001111110101110011010001111000100010001010111
+---------------------------------------------
+Packet No : 4
+Frame No  : 1
+Source Port      : 0111100101110011
+Destination Port : 1100011100010111
+
+Source IP        : 10001110111110101100000100001110
+Destination IP   : 11001101111110111111001001100111
+Source MAC       : 001111000101101010110100000111011001111100000010
+Destination MAC  : 101110000010011111101011100110100011110001000100
+Frame Data       : 00100000
+Tail             : 00000000
+Frame Stream     : 0000000000111100010110101011010000011101100111110000001010111000001001111110101110011010001111000100010000100000
+---------------------------------------------
+Packet No : 4
+Frame No  : 2
+Source Port      : 0111100101110011
+Destination Port : 1100011100010111
+
+Source IP        : 10001110111110101100000100001110
+Destination IP   : 11001101111110111111001001100111
+Source MAC       : 001111000101101010110100000111011001111100000010
+Destination MAC  : 101110000010011111101011100110100011110001000100
+Frame Data       : 01000001
+Tail             : 00000000
+Frame Stream     : 0000000000111100010110101011010000011101100111110000001010111000001001111110101110011010001111000100010001000001
+---------------------------------------------
+Packet No : 5
+Frame No  : 1
+Source Port      : 0111100101110011
+Destination Port : 1100011100010111
+
+Source IP        : 10001110111110101100000100001110
+Destination IP   : 11001101111110111111001001100111
+Source MAC       : 001111000101101010110100000111011001111100000010
+Destination MAC  : 101110000010011111101011100110100011110001000100
+Frame Data       : 01010010
+Tail             : 00000000
+Frame Stream     : 0000000000111100010110101011010000011101100111110000001010111000001001111110101110011010001111000100010001010010
+---------------------------------------------
+Packet No : 5
+Frame No  : 2
+Source Port      : 0111100101110011
+Destination Port : 1100011100010111
+
+Source IP        : 10001110111110101100000100001110
+Destination IP   : 11001101111110111111001001100111
+Source MAC       : 001111000101101010110100000111011001111100000010
+Destination MAC  : 101110000010011111101011100110100011110001000100
+Frame Data       : 01000101
+Tail             : 00000000
+Frame Stream     : 0000000000111100010110101011010000011101100111110000001010111000001001111110101110011010001111000100010001000101
+---------------------------------------------
+Packet No : 6
+Frame No  : 1
+Source Port      : 0111100101110011
+Destination Port : 1100011100010111
+
+Source IP        : 10001110111110101100000100001110
+Destination IP   : 11001101111110111111001001100111
+Source MAC       : 001111000101101010110100000111011001111100000010
+Destination MAC  : 101110000010011111101011100110100011110001000100
+Frame Data       : 00100000
+Tail             : 00000000
+Frame Stream     : 0000000000111100010110101011010000011101100111110000001010111000001001111110101110011010001111000100010000100000
+---------------------------------------------
+Packet No : 6
+Frame No  : 2
+Source Port      : 0111100101110011
+Destination Port : 1100011100010111
+
+Source IP        : 10001110111110101100000100001110
+Destination IP   : 11001101111110111111001001100111
+Source MAC       : 001111000101101010110100000111011001111100000010
+Destination MAC  : 101110000010011111101011100110100011110001000100
+Frame Data       : 01011001
+Tail             : 00000000
+Frame Stream     : 0000000000111100010110101011010000011101100111110000001010111000001001111110101110011010001111000100010001011001
+---------------------------------------------
+Packet No : 7
+Frame No  : 1
+Source Port      : 0111100101110011
+Destination Port : 1100011100010111
+
+Source IP        : 10001110111110101100000100001110
+Destination IP   : 11001101111110111111001001100111
+Source MAC       : 001111000101101010110100000111011001111100000010
+Destination MAC  : 101110000010011111101011100110100011110001000100
+Frame Data       : 01001111
+Tail             : 00000000
+Frame Stream     : 0000000000111100010110101011010000011101100111110000001010111000001001111110101110011010001111000100010001001111
+---------------------------------------------
+Packet No : 7
+Frame No  : 2
+Source Port      : 0111100101110011
+Destination Port : 1100011100010111
+
+Source IP        : 10001110111110101100000100001110
+Destination IP   : 11001101111110111111001001100111
+Source MAC       : 001111000101101010110100000111011001111100000010
+Destination MAC  : 101110000010011111101011100110100011110001000100
+Frame Data       : 01010101
+Tail             : 00000000
+Frame Stream     : 0000000000111100010110101011010000011101100111110000001010111000001001111110101110011010001111000100010001010101
+---------------------------------------------
+
+=============== SUMMARY ===============
+Message              : "HI HOW ARE YOU"
+Application bits     : 112
+Transport layer bits : 144
+Network layer bits   : 176
+Data Link layer bits : 280
+Total packets        : 7
+Total frames         : 14
+=========================================
+[24bcs179@mepcolinux EX0]exit
+
+Script done on Thursday 16 July 2026 10:37:19 AM IST
+
