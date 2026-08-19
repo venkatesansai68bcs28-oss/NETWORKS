@@ -1,0 +1,85 @@
+#include <stdio.h>
+
+#define INF 99999
+#define MAX 20
+
+struct Edge
+{
+    int source;
+    int destination;
+    int weight;
+};
+
+int main()
+{
+    int vertices, edges, source;
+    int i, j;
+    int distance[MAX];
+    struct Edge edge[MAX];
+
+    printf("Enter number of vertices: ");
+    scanf("%d", &vertices);
+
+    printf("Enter number of edges: ");
+    scanf("%d", &edges);
+
+    printf("Enter source, destination and weight of each edge:\n");
+
+    for (i = 0; i < edges; i++)
+    {
+        scanf("%d %d %d",
+              &edge[i].source,
+              &edge[i].destination,
+              &edge[i].weight);
+    }
+
+    printf("Enter source vertex: ");
+    scanf("%d", &source);
+
+    for (i = 0; i < vertices; i++)
+        distance[i] = INF;
+
+    distance[source] = 0;
+
+    for (i = 1; i < vertices; i++)
+    {
+        for (j = 0; j < edges; j++)
+        {
+            int u = edge[j].source;
+            int v = edge[j].destination;
+            int w = edge[j].weight;
+
+            if (distance[u] != INF &&
+                distance[u] + w < distance[v])
+            {
+                distance[v] = distance[u] + w;
+            }
+        }
+    }
+
+    for (j = 0; j < edges; j++)
+    {
+        int u = edge[j].source;
+        int v = edge[j].destination;
+        int w = edge[j].weight;
+
+        if (distance[u] != INF &&
+            distance[u] + w < distance[v])
+        {
+            printf("\nNegative weight cycle detected\n");
+            return 0;
+        }
+    }
+
+    printf("\nShortest distances from source %d:\n", source);
+
+    for (i = 0; i < vertices; i++)
+    {
+        if (distance[i] == INF)
+            printf("Node %d = INF\n", i);
+        else
+            printf("Node %d = %d\n", i, distance[i]);
+    }
+
+    return 0;
+}
