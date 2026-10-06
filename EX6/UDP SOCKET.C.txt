@@ -1,0 +1,559 @@
+[24bcs179@mepcolinux EX6]$cat EX6.prn
+Script started on Sat Sep  5 13:40:14 2026
+[?1034h[24bcs179@mepcolinux EX6]$cat chat_cli.c
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+
+#define PORT      9000
+#define BUF_SIZE  1024
+
+int main(int argc, char *argv[]) {
+    int sockfd;
+    char buffer[BUF_SIZE];
+    struct sockaddr_in server_addr;
+    socklen_t addr_len = sizeof(server_addr);
+    const char *server_ip = (argc > 1) ? argv[1] : "127.0.0.1";
+
+    if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+        perror("socket() failed");
+        exit(EXIT_FAILURE);
+    }
+
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port   = htons(PORT);
+
+    if (inet_pton(AF_INET, server_ip, &server_addr.sin_addr) <= 0) {
+        perror("Invalid server IP");
+        exit(EXIT_FAILURE);
+    }
+
+    printf("[Chat-Client] Connected (UDP, iterative) to %s:%d\n", server_ip, PORT);
+    printf("Type 'bye' to end the chat.\n\n");
+
+    while (1) {
+        printf("You     >> ");
+        if (fgets(buffer, BUF_SIZE, stdin) == NULL) break;
+        buffer[strcspn(buffer, "\n")] = '\0';
+
+        sendto(sockfd, buffer, strlen(buffer), 0,
+               (struct sockaddr *)&server_addr, addr_len);
+
+        if (strcmp(buffer, "bye") == 0) {
+            int n = recvfrom(sockfd, buffer, BUF_SIZE - 1, 0,
+                              (struct sockaddr *)&server_addr, &addr_len);
+            if (n > 0) { buffer[n] = '\0'; printf("Server  >> %s\n", buffer); }
+            break;
+        }
+
+        int n = recvfrom(sockfd, buffer, BUF_SIZE - 1, 0,
+                          (struct sockaddr *)&server_addr, &addr_len);
+        if (n < 0) { perror("recvfrom() failed"); break; }
+        buffer[n] = '\0';
+        printf("Server  >> %s\n", buffer);
+    }
+
+    close(sockfd);
+    return 0;
+}
+
+[24bcs179@mepcolinux EX6]$cat chat_ser.c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+
+#define PORT      9000
+#define BUF_SIZE  1024
+
+int main(void) {
+    int sockfd;
+    char buffer[BUF_SIZE];
+    struct sockaddr_in server_addr, client_addr;
+    socklen_t addr_len = sizeof(client_addr);
+
+    /* 1. Create UDP socket */
+    if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+        perror("socket() failed");
+        exit(EXIT_FAILURE);
+    }
+
+    /* 2. Bind to well known port */
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family      = AF_INET;
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+    server_addr.sin_port        = htons(PORT);
+
+    if (bind(sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+        perror("bind() failed");
+        close(sockfd);
+        exit(EXIT_FAILURE);
+    }
+
+    printf("[Chat-Server] Listening on UDP port %d (iterative)\n", PORT);
+    printf("[Chat-Server] Waiting for a client to say hello...\n\n");
+
+    /* 3. Iterative request/response loop - one exchange at a time */
+    while (1) {
+        memset(buffer, 0, BUF_SIZE);
+        int n = recvfrom(sockfd, buffer, BUF_SIZE - 1, 0,
+                          (struct sockaddr *)&client_addr, &addr_len);
+        if (n < 0) {
+            perror("recvfrom() failed");
+            continue;
+        }
+        buffer[n] = '\0';
+
+        printf("Client [%s:%d] >> %s\n",
+               inet_ntoa(client_addr.sin_addr),
+               ntohs(client_addr.sin_port), buffer);
+
+        if (strcmp(buffer, "bye") == 0) {
+            const char *msg = "Server: Goodbye!";
+            sendto(sockfd, msg, strlen(msg), 0,
+                   (struct sockaddr *)&client_addr, addr_len);
+            printf("Client disconnected.\n\n");
+            continue; /* server keeps running for the next client */
+        }
+
+        printf("Server  >> ");
+        fflush(stdout);
+        if (fgets(buffer, BUF_SIZE, stdin) == NULL) break;
+        buffer[strcspn(buffer, "\n")] = '\0';
+
+        sendto(sockfd, buffer, strlen(buffer), 0,
+               (struct sockaddr *)&client_addr, addr_len);
+    }
+
+    close(sockfd);
+    return 0;
+}
+
+[24bcs179@mepcolinux EX6]$
+dhcp_cli.c  dhcp_ser.c  dns_cli.c   dns_ser.c
+[24bcs179@mepcolinux EX6]$cat dns_ser.c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+
+#define PORT        9001
+#define BUF_SIZE    512
+#define TABLE_SIZE  53          /* prime bucket count */
+
+/* ---------- Hash table (chaining) ---------- */
+typedef struct Node {
+    char domain[128];
+    char ip[INET_ADDRSTRLEN];
+    struct Node *next;
+} Node;
+
+Node *table[TABLE_SIZE];
+
+/* djb2-style string hash */
+unsigned int hash(const char *str) {
+    unsigned long h = 5381;
+    int c;
+    while ((c = *str++))
+        h = ((h << 5) + h) + c;      /* h * 33 + c */
+    return (unsigned int)(h % TABLE_SIZE);
+}
+
+void insert(const char *domain, const char *ip) {
+    unsigned int idx = hash(domain);
+    Node *n = malloc(sizeof(Node));
+    strncpy(n->domain, domain, sizeof(n->domain) - 1);
+    n->domain[sizeof(n->domain) - 1] = '\0';
+    strncpy(n->ip, ip, sizeof(n->ip) - 1);
+    n->ip[sizeof(n->ip) - 1] = '\0';
+    n->next = table[idx];         /* insert at head of bucket */
+    table[idx] = n;
+}
+
+/* Returns pointer to IP string, or NULL if not found */
+const char *lookup(const char *domain) {
+    unsigned int idx = hash(domain);
+    Node *cur = table[idx];
+    while (cur) {
+        if (strcmp(cur->domain, domain) == 0)
+            return cur->ip;
+        cur = cur->next;
+    }
+    return NULL;
+}
+
+void load_records(const char *filename) {
+    FILE *fp = fopen(filename, "r");
+    if (!fp) {
+        printf("[DNS-Server] records.txt not found, loading built-in defaults.\n");
+        insert("google.com",     "142.250.183.14");
+        insert("youtube.com",    "142.250.183.78");
+        insert("facebook.com",   "157.240.22.35");
+        insert("github.com",     "140.82.112.3");
+        insert("wikipedia.org",  "208.80.154.224");
+        insert("amazon.com",     "205.251.242.103");
+        insert("openai.com",     "104.18.32.115");
+        return;
+    }
+    char domain[128], ip[64];
+    while (fscanf(fp, "%127s %63s", domain, ip) == 2) {
+        insert(domain, ip);
+    }
+    fclose(fp);
+}
+
+void print_table(void) {
+    printf("\n----- DNS Hash Table (%d buckets) -----\n", TABLE_SIZE);
+    for (int i = 0; i < TABLE_SIZE; i++) {
+        if (!table[i]) continue;
+        printf("bucket[%2d]: ", i);
+        for (Node *cur = table[i]; cur; cur = cur->next)
+            printf("(%s -> %s) ", cur->domain, cur->ip);
+        printf("\n");
+    }
+    printf("----------------------------------------\n\n");
+}
+
+int main(void) {
+    int sockfd;
+    char buffer[BUF_SIZE];
+    struct sockaddr_in server_addr, client_addr;
+    socklen_t addr_len = sizeof(client_addr);
+
+    load_records("records.txt");
+    print_table();
+
+    if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+        perror("socket() failed");
+        exit(EXIT_FAILURE);
+    }
+
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family      = AF_INET;
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+    server_addr.sin_port        = htons(PORT);
+
+    if (bind(sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+        perror("bind() failed");
+        close(sockfd);
+        exit(EXIT_FAILURE);
+    }
+
+    printf("[DNS-Server] Listening on UDP port %d (iterative)\n\n", PORT);
+
+    while (1) {
+        memset(buffer, 0, BUF_SIZE);
+        int n = recvfrom(sockfd, buffer, BUF_SIZE - 1, 0,
+                          (struct sockaddr *)&client_addr, &addr_len);
+        if (n < 0) { perror("recvfrom() failed"); continue; }
+        buffer[n] = '\0';
+
+        printf("Query from %s:%d  ->  domain = \"%s\"\n",
+               inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port), buffer);
+
+        const char *ip = lookup(buffer);
+        char reply[BUF_SIZE];
+        if (ip) {
+            snprintf(reply, sizeof(reply), "%s", ip);
+            printf("  -> RESOLVED  : %s = %s\n\n", buffer, ip);
+        } else {
+            snprintf(reply, sizeof(reply), "NXDOMAIN");
+            printf("  -> NOT FOUND : %s is not in the table\n\n", buffer);
+        }
+
+        sendto(sockfd, reply, strlen(reply), 0,
+               (struct sockaddr *)&client_addr, addr_len);
+    }
+
+    close(sockfd);
+    return 0;
+}
+
+[24bcs179@mepcolinux EX6]$cat dns_cli.c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+
+#define PORT      9001
+#define BUF_SIZE  512
+
+int main(int argc, char *argv[]) {
+    int sockfd;
+    char domain[BUF_SIZE], reply[BUF_SIZE];
+    struct sockaddr_in server_addr;
+    socklen_t addr_len = sizeof(server_addr);
+    const char *server_ip = (argc > 1) ? argv[1] : "127.0.0.1";
+
+    if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+        perror("socket() failed");
+        exit(EXIT_FAILURE);
+    }
+
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port   = htons(PORT);
+    inet_pton(AF_INET, server_ip, &server_addr.sin_addr);
+
+    printf("[DNS-Client] Resolver ready. Talking to DNS server at %s:%d\n", server_ip, PORT);
+    printf("Type 'exit' to quit.\n\n");
+
+    while (1) {
+        printf("Enter domain name to resolve: ");
+        if (fgets(domain, BUF_SIZE, stdin) == NULL) break;
+        domain[strcspn(domain, "\n")] = '\0';
+
+        if (strlen(domain) == 0) continue;
+        if (strcmp(domain, "exit") == 0) break;
+
+        sendto(sockfd, domain, strlen(domain), 0,
+               (struct sockaddr *)&server_addr, addr_len);
+
+        int n = recvfrom(sockfd, reply, BUF_SIZE - 1, 0,
+                          (struct sockaddr *)&server_addr, &addr_len);
+        if (n < 0) { perror("recvfrom() failed"); continue; }
+        reply[n] = '\0';
+
+        if (strcmp(reply, "NXDOMAIN") == 0)
+            printf("  -> Could not resolve \"%s\" (not in DNS table)\n\n", domain);
+        else
+            printf("  -> %s resolves to IP address: %s\n\n", domain, reply);
+    }
+
+    close(sockfd);
+    return 0;
+}
+
+[24bcs179@mepcolinux EX6]$cat dhcp_ser.c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+
+#define PORT       9002
+#define BUF_SIZE   256
+#define POOL_SIZE  10
+
+typedef struct {
+    char ip[INET_ADDRSTRLEN];
+    int  leased;                 /* 0 = free, 1 = leased */
+    char client_id[64];          /* "ip:port" of the leaseholder */
+} Lease;
+
+Lease pool[POOL_SIZE];
+
+void init_pool(void) {
+    /* Pool: 192.168.1.100 - 192.168.1.109 */
+    for (int i = 0; i < POOL_SIZE; i++) {
+        snprintf(pool[i].ip, sizeof(pool[i].ip), "192.168.1.%d", 100 + i);
+        pool[i].leased = 0;
+        pool[i].client_id[0] = '\0';
+    }
+}
+
+void print_pool(void) {
+    printf("\n----- DHCP Address Pool -----\n");
+    for (int i = 0; i < POOL_SIZE; i++)
+        printf("  %-15s : %s%s%s\n", pool[i].ip,
+               pool[i].leased ? "LEASED to " : "FREE",
+               pool[i].leased ? pool[i].client_id : "",
+               "");
+    printf("------------------------------\n\n");
+}
+
+int find_free_slot(void) {
+    for (int i = 0; i < POOL_SIZE; i++)
+        if (!pool[i].leased) return i;
+    return -1;
+}
+
+int find_ip_slot(const char *ip) {
+    for (int i = 0; i < POOL_SIZE; i++)
+        if (strcmp(pool[i].ip, ip) == 0) return i;
+    return -1;
+}
+
+int main(void) {
+    int sockfd;
+    char buffer[BUF_SIZE], reply[BUF_SIZE], client_id[64];
+    struct sockaddr_in server_addr, client_addr;
+    socklen_t addr_len = sizeof(client_addr);
+
+    init_pool();
+
+    if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+        perror("socket() failed");
+        exit(EXIT_FAILURE);
+    }
+
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family      = AF_INET;
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+    server_addr.sin_port        = htons(PORT);
+
+    if (bind(sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+        perror("bind() failed");
+        close(sockfd);
+        exit(EXIT_FAILURE);
+    }
+
+    printf("[DHCP-Server] Listening on UDP port %d (iterative)\n", PORT);
+    print_pool();
+
+    while (1) {
+        memset(buffer, 0, BUF_SIZE);
+        int n = recvfrom(sockfd, buffer, BUF_SIZE - 1, 0,
+                          (struct sockaddr *)&client_addr, &addr_len);
+        if (n < 0) { perror("recvfrom() failed"); continue; }
+        buffer[n] = '\0';
+
+        snprintf(client_id, sizeof(client_id), "%s:%d",
+                 inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+
+        printf("[%s] -> %s\n", client_id, buffer);
+
+        if (strcmp(buffer, "DISCOVER") == 0) {
+            int idx = find_free_slot();
+            if (idx == -1) {
+                snprintf(reply, sizeof(reply), "NAK no_free_ip");
+            } else {
+                snprintf(reply, sizeof(reply), "OFFER %s", pool[idx].ip);
+            }
+            printf("            <- %s\n\n", reply);
+
+        } else if (strncmp(buffer, "REQUEST ", 8) == 0) {
+            char req_ip[INET_ADDRSTRLEN];
+            sscanf(buffer + 8, "%15s", req_ip);
+            int idx = find_ip_slot(req_ip);
+            if (idx != -1 && !pool[idx].leased) {
+                pool[idx].leased = 1;
+                strncpy(pool[idx].client_id, client_id, sizeof(pool[idx].client_id) - 1);
+                snprintf(reply, sizeof(reply), "ACK %s", req_ip);
+                printf("            <- %s   (lease granted)\n", reply);
+                print_pool();
+            } else {
+                snprintf(reply, sizeof(reply), "NAK %s", req_ip);
+                printf("            <- %s   (unavailable)\n\n", reply);
+            }
+
+        } else if (strncmp(buffer, "RELEASE ", 8) == 0) {
+            char rel_ip[INET_ADDRSTRLEN];
+            sscanf(buffer + 8, "%15s", rel_ip);
+            int idx = find_ip_slot(rel_ip);
+            if (idx != -1) {
+                pool[idx].leased = 0;
+                pool[idx].client_id[0] = '\0';
+            }
+            snprintf(reply, sizeof(reply), "RELEASED %s", rel_ip);
+            printf("            <- %s\n", reply);
+            print_pool();
+
+        } else {
+            snprintf(reply, sizeof(reply), "ERROR unknown_command");
+        }
+
+        sendto(sockfd, reply, strlen(reply), 0,
+               (struct sockaddr *)&client_addr, addr_len);
+    }
+
+    close(sockfd);
+    return 0;
+}
+
+[24bcs179@mepcolinux EX6]$cat dhcp_cli.c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+
+#define PORT      9002
+#define BUF_SIZE  256
+
+static int udp_exchange(int sockfd, struct sockaddr_in *server_addr,
+                         socklen_t addr_len, const char *msg, char *reply) {
+    sendto(sockfd, msg, strlen(msg), 0, (struct sockaddr *)server_addr, addr_len);
+    int n = recvfrom(sockfd, reply, BUF_SIZE - 1, 0,
+                      (struct sockaddr *)server_addr, &addr_len);
+    if (n < 0) return -1;
+    reply[n] = '\0';
+    return 0;
+}
+
+int main(int argc, char *argv[]) {
+    int sockfd;
+    char reply[BUF_SIZE], request[BUF_SIZE], leased_ip[64] = {0};
+    struct sockaddr_in server_addr;
+    socklen_t addr_len = sizeof(server_addr);
+    const char *server_ip = (argc > 1) ? argv[1] : "127.0.0.1";
+
+    if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+        perror("socket() failed");
+        exit(EXIT_FAILURE);
+    }
+
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port   = htons(PORT);
+    inet_pton(AF_INET, server_ip, &server_addr.sin_addr);
+
+    printf("[DHCP-Client] Starting DORA exchange with %s:%d\n\n", server_ip, PORT);
+
+    /* --- DISCOVER --- */
+    printf("Step 1: Sending DISCOVER...\n");
+    if (udp_exchange(sockfd, &server_addr, addr_len, "DISCOVER", reply) < 0) {
+        perror("recvfrom failed"); exit(EXIT_FAILURE);
+    }
+    printf("Step 2: Received %s\n", reply);
+
+    if (strncmp(reply, "OFFER ", 6) != 0) {
+        printf("No IP offered by server. Exiting.\n");
+        close(sockfd);
+        return 1;
+    }
+    sscanf(reply + 6, "%63s", leased_ip);
+
+    /* --- REQUEST --- */
+    snprintf(request, sizeof(request), "REQUEST %s", leased_ip);
+    printf("Step 3: Sending %s\n", request);
+    if (udp_exchange(sockfd, &server_addr, addr_len, request, reply) < 0) {
+        perror("recvfrom failed"); exit(EXIT_FAILURE);
+    }
+    printf("Step 4: Received %s\n\n", reply);
+
+    if (strncmp(reply, "ACK ", 4) == 0)
+        printf(">>> Lease successful! Assigned IP address: %s\n\n", leased_ip);
+    else
+        printf(">>> Lease failed for %s\n\n", leased_ip);
+
+    printf("Type 'release' to give the IP back, or anything else to quit: ");
+    char cmd[32];
+    if (fgets(cmd, sizeof(cmd), stdin) && strncmp(cmd, "release", 7) == 0) {
+        snprintf(request, sizeof(request), "RELEASE %s", leased_ip);
+        udp_exchange(sockfd, &server_addr, addr_len, request, reply);
+        printf("%s\n", reply);
+    }
+
+    close(sockfd);
+    return 0;
+}
+
+[24bcs179@mepcolinux EX6]$exit
+exit
+
+Script done on Sat Sep  5 13:41:13 2026
+[24bcs179@mepcolinux EX6]$

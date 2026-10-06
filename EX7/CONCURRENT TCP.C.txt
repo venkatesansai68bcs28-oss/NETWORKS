@@ -1,0 +1,970 @@
+[24bcs179@mepcolinux EX7]$cat EX7.prn
+[24bcs179@mepcolinux EX7]$cat ser_chat.c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <sys/wait.h>
+
+#define BUFFER_SIZE 1024
+
+int main(int argc, char *argv[])
+{
+    int server_fd, client_fd;
+    struct sockaddr_in server_addr, client_addr;
+    char buffer[BUFFER_SIZE];
+    int port;
+    socklen_t addr_len;
+
+    /* Validate command line arguments */
+    if (argc != 2)
+    {
+        fprintf(stderr, "Usage: %s <port>\n", argv[0]);
+        exit(EXIT_FAILURE);
+    }
+
+    port = atoi(argv[1]);
+
+    if (port <= 0 || port > 65535)
+    {
+        fprintf(stderr, "Invalid port number: %s\n", argv[1]);
+        exit(EXIT_FAILURE);
+    }
+
+    /* Create TCP socket */
+    server_fd = socket(AF_INET, SOCK_STREAM, 0);
+
+    if (server_fd < 0)
+    {
+        perror("socket failed");
+        exit(EXIT_FAILURE);
+    }
+
+    /* Set up server address */
+    memset(&server_addr, 0, sizeof(server_addr));
+
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(port);
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+
+    /* Bind socket */
+    if (bind(server_fd,
+             (struct sockaddr *)&server_addr,
+             sizeof(server_addr)) < 0)
+    {
+        perror("bind failed");
+        close(server_fd);
+        exit(EXIT_FAILURE);
+    }
+
+    /* Listen */
+    if (listen(server_fd, 5) < 0)
+    {
+        perror("listen failed");
+        close(server_fd);
+        exit(EXIT_FAILURE);
+    }
+
+    printf("TCP Chat Server listening on port %d...\n", port);
+    printf("Waiting for clients...\n\n");
+
+    int client_number = 0;
+
+    while (1)
+    {
+        addr_len = sizeof(client_addr);
+
+        /* Accept client */
+        client_fd = accept(server_fd,
+                           (struct sockaddr *)&client_addr,
+                           &addr_len);
+
+        if (client_fd < 0)
+        {
+            perror("accept failed");
+            continue;
+        }
+
+        client_number++;
+
+        printf("Client %d connected.\n", client_number);
+
+        /* Create child process for client */
+        if (fork() == 0)
+        {
+            close(server_fd);
+
+            char message[BUFFER_SIZE];
+
+            /* Tell client its number */
+            sprintf(message,
+                    "You are Client %d",
+                    client_number);
+
+            send(client_fd,
+                 message,
+                 strlen(message),
+                 0);
+
+            while (1)
+            {
+                /* Receive message from client */
+                int bytes_received = recv(client_fd,
+                                          buffer,
+                                          BUFFER_SIZE - 1,
+                                          0);
+
+                if (bytes_received <= 0)
+                {
+                    break;
+                }
+
+                buffer[bytes_received] = '\0';
+
+                /* Remove newline */
+                buffer[strcspn(buffer, "\n")] = '\0';
+
+                /* Client wants to quit */
+                if (strcmp(buffer, "quit") == 0 ||
+                    strcmp(buffer, "/quit") == 0)
+                {
+                    break;
+                }
+
+                /* Display client message */
+                printf("Client %d: %s\n",
+                       client_number,
+                       buffer);
+
+                printf("You(Server): ");
+
+                /* Server reply */
+                if (fgets(message,
+                          BUFFER_SIZE,
+                          stdin) == NULL)
+                {
+                    strcpy(message, "quit");
+                }
+
+                message[strcspn(message, "\n")] = '\0';
+
+                /* Send reply only to this client */
+                char output[BUFFER_SIZE];
+
+                sprintf(output,
+                        "You(Server): %s",
+                        message);
+
+                send(client_fd,
+                     output,
+                     strlen(output),
+                     0);
+
+                /* Server wants to quit this conversation */
+                if (strcmp(message, "quit") == 0 ||
+                    strcmp(message, "/quit") == 0)
+                {
+                    break;
+                }
+            }
+
+            printf("Client %d has left the chat.\n",
+                   client_number);
+
+            close(client_fd);
+
+            exit(0);
+        }
+
+        /* Parent closes its copy */
+        close(client_fd);
+
+        /* Remove finished child processes */
+        waitpid(-1, NULL, WNOHANG);
+    }
+
+    close(server_fd);
+
+    return 0;
+}
+
+[24bcs179@mepcolinux EX7]$cat cli_chat.c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+
+#define BUFFER_SIZE 1024
+
+int main(int argc, char *argv[])
+{
+    int sockfd;
+    struct sockaddr_in server_addr;
+    char buffer[BUFFER_SIZE];
+    int port;
+
+    /* Validate command line arguments */
+    if (argc != 3)
+    {
+        fprintf(stderr,
+                "Usage: %s <server_ip> <server_port>\n",
+                argv[0]);
+
+        exit(EXIT_FAILURE);
+    }
+
+    port = atoi(argv[2]);
+
+    if (port <= 0 || port > 65535)
+    {
+        fprintf(stderr,
+                "Invalid port number: %s\n",
+                argv[2]);
+
+        exit(EXIT_FAILURE);
+    }
+
+    /* Create TCP socket */
+    sockfd = socket(AF_INET, SOCK_STREAM, 0);
+
+    if (sockfd < 0)
+    {
+        perror("socket failed");
+        exit(EXIT_FAILURE);
+    }
+
+    /* Set up server address */
+    memset(&server_addr, 0, sizeof(server_addr));
+
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(port);
+
+    if (inet_pton(AF_INET,
+                  argv[1],
+                  &server_addr.sin_addr) <= 0)
+    {
+        fprintf(stderr,
+                "Invalid server IP address: %s\n",
+                argv[1]);
+
+        close(sockfd);
+        exit(EXIT_FAILURE);
+    }
+
+    /* Connect to server */
+    if (connect(sockfd,
+                (struct sockaddr *)&server_addr,
+                sizeof(server_addr)) < 0)
+    {
+        perror("connect failed");
+        close(sockfd);
+        exit(EXIT_FAILURE);
+    }
+
+    printf("Connected to chat server at %s:%d\n",
+           argv[1], port);
+
+    printf("Type 'quit' to end the chat.\n\n");
+
+    /* Receive client number */
+    int bytes_received = recv(sockfd,
+                              buffer,
+                              BUFFER_SIZE - 1,
+                              0);
+
+    if (bytes_received > 0)
+    {
+        buffer[bytes_received] = '\0';
+
+        printf("%s\n\n", buffer);
+    }
+
+    while (1)
+    {
+        /* Get message from client */
+        printf("You: ");
+
+        if (fgets(buffer,
+                  BUFFER_SIZE,
+                  stdin) == NULL)
+        {
+            strcpy(buffer, "quit");
+        }
+
+        buffer[strcspn(buffer, "\n")] = '\0';
+
+        /* Send message to server */
+        if (send(sockfd,
+                 buffer,
+                 strlen(buffer),
+                 0) < 0)
+        {
+            perror("send failed");
+            break;
+        }
+
+        /* Client wants to exit */
+        if (strcmp(buffer, "quit") == 0 ||
+            strcmp(buffer, "/quit") == 0)
+        {
+            printf("You ended the chat.\n");
+            break;
+        }
+
+        /* Receive reply from server */
+        bytes_received = recv(sockfd,
+                              buffer,
+                              BUFFER_SIZE - 1,
+                              0);
+
+        if (bytes_received <= 0)
+        {
+            printf("Server disconnected.\n");
+            break;
+        }
+
+        buffer[bytes_received] = '\0';
+
+        printf("%s\n\n", buffer);
+
+        /* Server wants to end the chat */
+        if (strcmp(buffer, "quit") == 0 ||
+            strcmp(buffer, "/quit") == 0)
+        {
+            printf("Server ended the chat.\n");
+            break;
+        }
+    }
+
+    close(sockfd);
+
+    return 0;
+}
+[24bcs179@mepcolinux EX7]$cat ser_file.c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+
+#define BUF_SIZE 1024
+
+int main(int argc, char *argv[])
+{
+    int server_fd, client_fd;
+    char buffer[BUF_SIZE];
+
+    struct sockaddr_in server_addr, client_addr;
+    socklen_t len;
+
+    if (argc != 2)
+    {
+        printf("Usage: %s <port>\n", argv[0]);
+        return 1;
+    }
+
+    // Create TCP socket
+    server_fd = socket(AF_INET, SOCK_STREAM, 0);
+
+    if (server_fd < 0)
+    {
+        perror("socket");
+        return 1;
+    }
+
+    // Server address
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    server_addr.sin_port = htons(atoi(argv[1]));
+
+    // Bind
+    if (bind(server_fd, (struct sockaddr *)&server_addr,
+             sizeof(server_addr)) < 0)
+    {
+        perror("bind");
+        return 1;
+    }
+
+    // Listen
+    listen(server_fd, 5);
+
+    printf("File transfer server running on port %s...\n", argv[1]);
+
+    while (1)
+    {
+        len = sizeof(client_addr);
+
+        // Accept client
+        client_fd = accept(server_fd, (struct sockaddr *)&client_addr, &len);
+
+        if (client_fd < 0)
+        {
+            perror("accept");
+            continue;
+        }
+
+        // Create child process to handle this client
+        if (fork() == 0)
+        {
+            close(server_fd);
+
+            // ---- Step 1: read the filename (ends with '\n') ----
+            char filename[256];
+            int i = 0;
+            char c;
+
+            while (recv(client_fd, &c, 1, 0) > 0 && c != '\n' && i < 255)
+                filename[i++] = c;
+            filename[i] = '\0';
+
+            char save_path[300];
+            snprintf(save_path, sizeof(save_path), "received_%s", filename);
+
+            FILE *fp = fopen(save_path, "wb");
+            if (fp == NULL)
+            {
+                perror("fopen");
+                close(client_fd);
+                exit(1);
+            }
+
+            // ---- Step 2: receive the file content until client closes ----
+            int n;
+            long total = 0;
+
+            while ((n = recv(client_fd, buffer, sizeof(buffer), 0)) > 0)
+            {
+                fwrite(buffer, 1, n, fp);
+                total += n;
+            }
+
+            fclose(fp);
+
+            printf("Received file '%s' (%ld bytes) -> saved as '%s'\n",
+                   filename, total, save_path);
+
+            close(client_fd);
+            exit(0);
+        }
+
+        // Parent doesn't need the connected socket
+        close(client_fd);
+    }
+
+    close(server_fd);
+
+    return 0;
+}
+[24bcs179@mepcolinux EX7]$cat cli_file.c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <libgen.h>
+
+#define BUF_SIZE 1024
+
+int main(int argc, char *argv[])
+{
+    int sockfd;
+    char buffer[BUF_SIZE];
+    char filepath[256];
+
+    struct sockaddr_in server_addr;
+
+    if (argc != 3)
+    {
+        printf("Usage: %s <server_ip> <port>\n", argv[0]);
+        return 1;
+    }
+
+    // Ask the user for the file to send
+    printf("Enter path of file to send: ");
+    fgets(filepath, sizeof(filepath), stdin);
+    filepath[strcspn(filepath, "\n")] = '\0'; // strip newline
+
+    // Open the file to send
+    FILE *fp = fopen(filepath, "rb");
+    if (fp == NULL)
+    {
+        perror("fopen");
+        return 1;
+    }
+
+    // Create TCP socket
+    sockfd = socket(AF_INET, SOCK_STREAM, 0);
+
+    if (sockfd < 0)
+    {
+        perror("socket");
+        return 1;
+    }
+
+    // Server address
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(atoi(argv[2]));
+    inet_pton(AF_INET, argv[1], &server_addr.sin_addr);
+
+    // Connect to server
+    if (connect(sockfd, (struct sockaddr *)&server_addr,
+                sizeof(server_addr)) < 0)
+    {
+        perror("connect");
+        return 1;
+    }
+
+    // ---- Step 1: send the filename, ending with '\n' ----
+    char *filename = basename(filepath);
+    char header[300];
+    snprintf(header, sizeof(header), "%s\n", filename);
+    send(sockfd, header, strlen(header), 0);
+
+    // ---- Step 2: send the file content in chunks ----
+    int n;
+    long total = 0;
+
+    while ((n = fread(buffer, 1, sizeof(buffer), fp)) > 0)
+    {
+        send(sockfd, buffer, n, 0);
+        total += n;
+    }
+
+    fclose(fp);
+
+    printf("Sent file '%s' (%ld bytes) to server\n", filename, total);
+
+    close(sockfd);
+
+    return 0;
+}
+[24bcs179@mepcolinux EX7]$cat ser_arp.c
+#define _POSIX_C_SOURCE 200809L
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <pthread.h> // Required for multi-threading
+
+#define BUF_SIZE 1024
+#define TABLE_SIZE 10
+
+/* ARP table entry */
+struct ARP
+{
+    char ip[20];
+    char mac[20];
+    int used;
+};
+
+/* ARP hash table and Mutex Lock */
+struct ARP table[TABLE_SIZE];
+pthread_mutex_t table_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+/* Simple hash function */
+int hash(char ip[])
+{
+    int value = 0;
+    for (int i = 0; ip[i] != '\0'; i++)
+        value = value + ip[i];
+    return value % TABLE_SIZE;
+}
+
+/* Insert IP and MAC into hash table */
+void insert(char ip[], char mac[])
+{
+    int index = hash(ip);
+    int start = index;
+
+    while (table[index].used == 1)
+    {
+        index = (index + 1) % TABLE_SIZE;
+        if (index == start) {
+            printf("ARP Table is full! Cannot insert %s\n", ip);
+            return;
+        }
+    }
+
+    strcpy(table[index].ip, ip);
+    strcpy(table[index].mac, mac);
+    table[index].used = 1;
+}
+
+/* Search IP in hash table */
+int search(char ip[], char mac[])
+{
+    int index = hash(ip);
+    int start = index;
+
+    while (table[index].used == 1)
+    {
+        if (strcmp(table[index].ip, ip) == 0)
+        {
+            strcpy(mac, table[index].mac);
+            return 1;
+        }
+
+        index = (index + 1) % TABLE_SIZE;
+
+        if (index == start)
+            break;
+    }
+    return 0;
+}
+
+/* New Function: Search target IP directly inside the real system ARP/neighbor cache */
+int search_system_arp_cache(char target_ip[], char found_mac[])
+{
+    FILE *fp = popen("ip neigh", "r");
+    if (fp == NULL)
+    {
+        perror("popen (ip neigh) failed");
+        return 0;
+    }
+
+    char line[BUF_SIZE];
+    int found = 0;
+
+    // "ip neigh" outputs format: <IP> dev <interface> lladdr <MAC> <STATE>
+    while (fgets(line, sizeof(line), fp) != NULL)
+    {
+        char parsed_ip[40] = {0};
+        char parsed_mac[40] = {0};
+        char token[40] = {0};
+
+        // Scan the line token by token to locate the IP and the physical link-layer address (lladdr)
+        if (sscanf(line, "%39s", parsed_ip) == 1)
+        {
+            // If the IP on this line matches what the client asked for
+            if (strcmp(parsed_ip, target_ip) == 0)
+            {
+                char *lladdr_ptr = strstr(line, "lladdr");
+                if (lladdr_ptr != NULL)
+                {
+                    if (sscanf(lladdr_ptr, "lladdr %39s", parsed_mac) == 1)
+                    {
+                        strncpy(found_mac, parsed_mac, 19);
+                        found_mac[19] = '\0';
+                        found = 1;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    pclose(fp);
+    return found;
+}
+
+/* Generate a simple MAC address for a new IP */
+void generate_mac(char ip[], char mac[])
+{
+    int a, b, c, d;
+    if (sscanf(ip, "%d.%d.%d.%d", &a, &b, &c, &d) == 4) {
+        sprintf(mac, "AA:BB:%02X:%02X:%02X:%02X", a, b, c, d);
+    } else {
+        strcpy(mac, "00:00:00:00:00:00");
+    }
+}
+
+/* Helper function to view the user-space ARP table */
+void print_arp_table()
+{
+    printf("\n============ CURRENT SIMULATED ARP TABLE ============\n");
+    printf("%-5s %-18s %-20s\n", "Slot", "IP Address", "MAC Address");
+    printf("-----------------------------------------------------\n");
+    for (int i = 0; i < TABLE_SIZE; i++)
+    {
+        if (table[i].used == 1) {
+            printf("[%02d]  %-18s %-20s\n", i, table[i].ip, table[i].mac);
+        } else {
+            printf("[%02d]  %-18s %-20s\n", i, "[Empty]", "None");
+        }
+    }
+    printf("=====================================================\n\n");
+}
+
+/* Runs the "ip neigh" shell command to display the actual kernel ARP/neighbor cache */
+void print_system_arp_cache()
+{
+    printf("\n============ SYSTEM ARP CACHE (ip neigh) ============\n");
+
+    FILE *fp = popen("ip neigh", "r");
+    if (fp == NULL)
+    {
+        perror("popen (ip neigh) failed");
+        return;
+    }
+
+    char line[BUF_SIZE];
+    int found = 0;
+    while (fgets(line, sizeof(line), fp) != NULL)
+    {
+        printf("%s", line);
+        found = 1;
+    }
+
+    if (!found)
+    {
+        printf("(No entries returned by 'ip neigh')\n");
+    }
+
+    pclose(fp);
+    printf("=====================================================\n\n");
+}
+
+/* Thread handler function for concurrent clients */
+void *client_handler(void *arg)
+{
+    int client_fd = *(int *)arg;
+    free(arg); // Free the memory allocated in main for the client socket descriptor
+
+    char buffer[BUF_SIZE];
+    char mac[20];
+    char reply[BUF_SIZE];
+
+    /* Receive IP address */
+    int n = recv(client_fd, buffer, sizeof(buffer) - 1, 0);
+
+    if (n > 0)
+    {
+        buffer[n] = '\0';
+        buffer[strcspn(buffer, "\r\n")] = '\0'; // Strip newline variants
+
+        /* Check whether IP is valid */
+        struct in_addr test_addr;
+        if (inet_pton(AF_INET, buffer, &test_addr) != 1)
+        {
+            char *msg = "Invalid IP address\n";
+            send(client_fd, msg, strlen(msg), 0);
+        }
+        else
+        {
+            // Lock the mutex before touching the shared table array or running cache checks
+            pthread_mutex_lock(&table_mutex);
+
+            if (search(buffer, mac))
+            {
+                printf("IP found in simulated ARP table.\n");
+                sprintf(reply, "IP: %s\nMAC: %s\nIP found in simulated ARP table.\n", buffer, mac);
+            }
+            else if (search_system_arp_cache(buffer, mac))
+            {
+                // Discovered in the kernel's real neighbor cache! Let's save it to our table.
+                insert(buffer, mac);
+                printf("IP found in System Kernel Cache (ip neigh). Added to simulated table.\n");
+                sprintf(reply, "IP: %s\nMAC: %s\nIP found in System Kernel Cache (ip neigh) & cached locally.\n", buffer, mac);
+            }
+            else
+            {
+                // Not found anywhere; fallback to auto-generating a fake address
+                generate_mac(buffer, mac);
+                insert(buffer, mac);
+                printf("IP not found anywhere. Generated new MAC and added to table.\n");
+                sprintf(reply, "IP: %s\nMAC: %s\nIP not found anywhere. Generated new fake MAC.\n", buffer, mac);
+            }
+
+            // Print table updates inside the lock for execution safety
+            print_arp_table();
+
+            // Also show the real kernel ARP/neighbor cache for comparison
+            print_system_arp_cache();
+
+            // Release the lock for other threads to use
+            pthread_mutex_unlock(&table_mutex);
+
+            /* Send result back to client */
+            send(client_fd, reply, strlen(reply), 0);
+        }
+    }
+
+    close(client_fd);
+    return NULL;
+}
+
+int main(int argc, char *argv[])
+{
+    int server_fd, client_fd;
+    struct sockaddr_in server_addr, client_addr;
+    socklen_t len;
+
+    if (argc != 2)
+    {
+        printf("Usage: %s <port>\n", argv[0]);
+        return 1;
+    }
+
+    /* Create TCP socket */
+    server_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (server_fd < 0)
+    {
+        perror("socket");
+        return 1;
+    }
+
+    // Allow immediate port reuse to bypass "bind: Address already in use" errors
+    int opt = 1;
+    setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+    /* Server address config */
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    server_addr.sin_port = htons(atoi(argv[1]));
+
+    /* Bind */
+    if (bind(server_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
+    {
+        perror("bind");
+        close(server_fd);
+        return 1;
+    }
+
+    /* Listen */
+    if (listen(server_fd, 5) < 0)
+    {
+        perror("listen");
+        close(server_fd);
+        return 1;
+    }
+
+    memset(table, 0, sizeof(table));
+
+    /* Initial ARP table seed entries */
+    insert("192.168.1.1", "AA:BB:CC:DD:EE:01");
+    insert("192.168.1.2", "AA:BB:CC:DD:EE:02");
+    insert("192.168.1.3", "AA:BB:CC:DD:EE:03");
+    insert("192.168.1.4", "AA:BB:CC:DD:EE:04");
+
+    printf("ARP lookup server running on port %s...\n", argv[1]);
+    print_arp_table();
+    print_system_arp_cache();
+
+    while (1)
+    {
+        len = sizeof(client_addr);
+
+        /* Accept client connection */
+        client_fd = accept(server_fd, (struct sockaddr *)&client_addr, &len);
+        if (client_fd < 0)
+        {
+            perror("accept");
+            continue;
+        }
+
+        printf("Client connected.\n");
+
+        // Safely pass file descriptor by dynamically allocating individual integers
+        int *client_sock_ptr = malloc(sizeof(int));
+        if (client_sock_ptr == NULL) {
+            perror("malloc failed");
+            close(client_fd);
+            continue;
+        }
+        *client_sock_ptr = client_fd;
+
+        pthread_t thread_id;
+        if (pthread_create(&thread_id, NULL, client_handler, (void *)client_sock_ptr) != 0)
+        {
+            perror("pthread_create failed");
+            free(client_sock_ptr);
+            close(client_fd);
+            continue;
+        }
+
+        // Detach the thread so that system handles the resources automatically upon closure
+        pthread_detach(thread_id);
+    }
+
+    close(server_fd);
+    return 0;
+}
+[24bcs179@mepcolinux EX7]$cat cli_arp.c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+
+#define BUF_SIZE 1024
+
+int main(int argc, char *argv[])
+{
+    int sockfd;
+    struct sockaddr_in server_addr;
+
+    char ip[BUF_SIZE];
+    char buffer[BUF_SIZE];
+
+    if (argc != 3)
+    {
+        printf("Usage: %s <server_ip> <port>\n", argv[0]);
+        return 1;
+    }
+
+    /* Create TCP socket */
+    sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd < 0)
+    {
+        perror("socket");
+        return 1;
+    }
+
+    /* Server address setup */
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(atoi(argv[2]));
+
+    if (inet_pton(AF_INET, argv[1], &server_addr.sin_addr) <= 0)
+    {
+        printf("Invalid server IP address.\n");
+        close(sockfd);
+        return 1;
+    }
+
+    /* Connect to server */
+    if (connect(sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
+    {
+        perror("connect");
+        close(sockfd);
+        return 1;
+    }
+
+    printf("Connected to ARP server.\n");
+
+    /* Get IP address from terminal */
+    printf("Enter IP address: ");
+    fflush(stdout); // FIX 1: Ensures the prompt prints to the screen immediately
+
+    fgets(ip, sizeof(ip), stdin);
+    ip[strcspn(ip, "\r\n")] = '\0';
+
+    /* Send IP address to server (including the null-terminator for TCP safety) */
+    // FIX 2: Sending strlen(ip) + 1 passes the '\0' boundary down the wire
+    send(sockfd, ip, strlen(ip) + 1, 0);
+
+    /* Receive result from server */
+    int n = recv(sockfd, buffer, sizeof(buffer) - 1, 0);
+    if (n > 0)
+    {
+        buffer[n] = '\0';
+        printf("\nServer Reply:\n%s", buffer);
+    }
+    else if (n == 0)
+    {
+        printf("\nServer closed the connection prematurely.\n");
+    }
+    else
+    {
+        perror("recv failed");
+    }
+
+    close(sockfd);
+    return 0;
+}
+[24bcs179@mepcolinux EX7]$exit
+exit
+Script done on Tue Sep  8 10:29:03 2026
